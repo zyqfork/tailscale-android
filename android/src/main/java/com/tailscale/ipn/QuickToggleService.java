@@ -1,83 +1,99 @@
-// Copyright (c) 2020 Tailscale Inc & AUTHORS All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// Copyright (c) Tailscale Inc & AUTHORS
+// SPDX-License-Identifier: BSD-3-Clause
 
 package com.tailscale.ipn;
 
-import android.content.Context;
-import android.content.ComponentName;
+import android.app.PendingIntent;
 import android.content.Intent;
+import android.os.Build;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public class QuickToggleService extends TileService {
-	// lock protects the static fields below it.
-	private static Object lock = new Object();
-	// Active tracks whether the VPN is active.
-	private static boolean active;
-	// Ready tracks whether the tailscale backend is
-	// ready to switch on/off.
-	private static boolean ready;
-	// currentTile tracks getQsTile while service is listening.
-	private static Tile currentTile;
+    // lock protects the static fields below it.
+    private static final Object lock = new Object();
 
-	@Override public void onStartListening() {
-		synchronized (lock) {
-			currentTile = getQsTile();
-		}
-		updateTile();
-	}
+    // isRunning tracks whether the VPN is running.
+    private static boolean isRunning;
 
-	@Override public void onStopListening() {
-		synchronized (lock) {
-			currentTile = null;
-		}
-	}
+    // currentTile tracks getQsTile while service is listening.
+    private static Tile currentTile;
 
-	@Override public void onClick() {
-		boolean r;
-		synchronized (lock) {
-			r = ready;
-		}
-		if (r) {
-			onTileClick();
-		} else {
-			// Start main activity.
-			Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
-			startActivityAndCollapse(i);
-		}
-	}
+    public static void updateTile() {
+        var app = UninitializedApp.get();
+        Tile t;
+        boolean act;
+        synchronized (lock) {
+            t = currentTile;
+            act = isRunning && app.isAbleToStartVPN();
+        }
+        if (t == null) {
+            return;
+        }
+        t.setLabel("Tailscale");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            t.setSubtitle(act ? app.getString(R.string.connected) : app.getString(R.string.not_connected));
+        }
+        t.setState(act ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
+        t.updateTile();
+    }
 
-	private static void updateTile() {
-		Tile t;
-		boolean act;
-		synchronized (lock) {
-			t = currentTile;
-			act = active && ready;
-		}
-		if (t == null) {
-			return;
-		}
-		t.setState(act ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
-		t.updateTile();
-	}
+    static void setVPNRunning(boolean running) {
+        synchronized (lock) {
+            isRunning = running;
+        }
+        updateTile();
+    }
 
-	static void setReady(Context ctx, boolean rdy) {
-		synchronized (lock) {
-			ready = rdy;
-		}
-		updateTile();
-	}
+    @Override
+    public void onStartListening() {
+        synchronized (lock) {
+            currentTile = getQsTile();
+        }
+        updateTile();
+    }
 
-	static void setStatus(Context ctx, boolean act) {
-		synchronized (lock) {
-			active = act;
-		}
-		updateTile();
-	}
+    @Override
+    public void onStopListening() {
+        synchronized (lock) {
+            currentTile = null;
+        }
+    }
 
-	private static native void onTileClick();
+    @SuppressWarnings("deprecation")
+    @Override
+    public void onClick() {
+        boolean r;
+        synchronized (lock) {
+            r = UninitializedApp.get().isAbleToStartVPN();
+        }
+        if (r) {
+            // Get the application to make sure it initializes
+            App.get();
+            onTileClick();
+        } else {
+            // Start main activity.
+            Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Request code for opening activity.
+                startActivityAndCollapse(PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            } else {
+                // Deprecated, but still required for older versions.
+                startActivityAndCollapse(i);
+            }
+        }
+    }
+
+    private void onTileClick() {
+        UninitializedApp app = UninitializedApp.get();
+        boolean needsToStop;
+        synchronized (lock) {
+            needsToStop = app.isAbleToStartVPN() && isRunning;
+        }
+        if (needsToStop) {
+            app.stopVPN();
+        } else {
+            app.startVPN();
+        }
+    }
 }
