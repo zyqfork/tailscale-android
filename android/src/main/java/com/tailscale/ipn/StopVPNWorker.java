@@ -1,13 +1,17 @@
-// Copyright (c) 2023 Tailscale Inc & AUTHORS All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// Copyright (c) Tailscale Inc & AUTHORS
+// SPDX-License-Identifier: BSD-3-Clause
 
 package com.tailscale.ipn;
 
-import androidx.work.Worker;
 import android.content.Context;
+
+import androidx.annotation.NonNull;
+import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
+/**
+ * A worker that exists to support IPNReceiver.
+ */
 public final class StopVPNWorker extends Worker {
 
     public StopVPNWorker(
@@ -16,10 +20,10 @@ public final class StopVPNWorker extends Worker {
         super(appContext, workerParams);
     }
 
-    @Override public Result doWork() {
-        disconnect();
+    @NonNull
+    @Override
+    public Result doWork() {
+        UninitializedApp.get().stopVPN();
         return Result.success();
     }
-
-    private native void disconnect();
 }
